@@ -1,0 +1,126 @@
+---
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    highlight: zenburn
+    theme: flatly
+  md_document:
+    variant: markdown_github
+    toc: true
+---
+
+```{r}
+knitr::opts_chunk$set(tidy=TRUE, highlight=TRUE, dev="png",
+               cache=TRUE, highlight=TRUE, autodep=TRUE, warning=FALSE, error=FALSE,
+               message=FALSE, prompt=TRUE, comment='', fig.cap='')
+```
+
+# Overview
+This is looking at a first sequencing run of single cells from the proximal tubule.
+There are three samples, `H1`, `H2` and `H3`. There is some prior knowledge that
+the `H1` sample might have some quality problems.
+
+## Barcode distributions {.tabset}
+
+For a single-cell experiment, we expect to see a set of barcodes that come
+from real cells and then a drop. Below we show the barcode distribution
+for a published experiment on K562 cells and then each of these samples.
+We look at only the top 100,000 barcodes for each sample.
+
+If you click on the tabs you can see each of the charts. We can see that
+the samples are missing the characteristic dip in the barcode distribution.
+Normally we would use this dip to determine a cutoff to filter out real cells.
+
+This may be due to there not being enough depth of sequencing or it may be
+due to the samples having something wrong with them. It would be helpful to
+ask the sequencing core what they think about this.
+
+```{r}
+samples = c("H1", "H2", "H3")
+barcode_files = file.path("umis", samples, "cb-histogram.txt")
+```
+
+### K562 experiment
+
+```{r}
+K562_bc = read.table("metadata/k562-histogram.txt", header=FALSE, sep="\t",
+                     nrows=100000)
+colnames(K562_bc) = c("barcode", "count")
+K562_bc$rank = as.numeric(rownames(K562_bc))
+ggplot(K562_bc, aes(rank, count)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_point() +
+  theme_bw() +
+  ggtitle("K562 barcode count distribution")
+```
+
+### H1
+```{r}
+h1_bc = read.table(barcode_files[1], header=FALSE, sep="\t", nrows=100000)
+colnames(h1_bc) = c("barcode", "count")
+h1_bc$rank = as.numeric(rownames(h1_bc))
+ggplot(h1_bc, aes(rank, count)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_point() +
+  theme_bw() +
+  ggtitle("H1 barcode count distribution")
+```
+
+### H2
+```{r}
+h2_bc = read.table(barcode_files[2], header=FALSE, sep="\t", nrows=100000)
+colnames(h2_bc) = c("barcode", "count")
+h2_bc$rank = as.numeric(rownames(h2_bc))
+ggplot(h2_bc, aes(rank, count)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_point() +
+  theme_bw() +
+  ggtitle("H2 barcode count distribution")
+```
+
+### H3
+```{r}
+h3_bc = read.table(barcode_files[3], header=FALSE, sep="\t", nrows=100000)
+colnames(h3_bc) = c("barcode", "count")
+h3_bc$rank = as.numeric(rownames(h3_bc))
+ggplot(h3_bc, aes(rank, count)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_point() +
+  theme_bw() +
+  ggtitle("H3 barcode count distribution")
+```
+
+## Counts
+Here we compare the counts for the K562 data as well as for
+each of the proximal tubule samples, using several different metrics.
+
+```{r}
+k562 = read.table("metadata/k562.counts", header=TRUE, sep=",", row.names="gene")
+count_files = file.path("umis", samples, paste(samples, ".counts", sep=""))
+h1 = read.table(count_files[1], header=TRUE, sep=",", row.names="gene")
+h2 = read.table(count_files[2], header=TRUE, sep=",", row.names="gene")
+h3 = read.table(count_files[3], header=TRUE, sep=",", row.names="gene")
+```
+
+### Genes Detected
+```{r}
+k562_detected = data.frame(cell=colnames(k562), total=colSums(k562),
+                           detected=colSums(k562 > 0), sample="k562")
+h1_detected = data.frame(cell=colnames(h1), total=colSums(h1),
+                           detected=colSums(h1 > 0), sample="h1")
+h2_detected = data.frame(cell=colnames(h2), total=colSums(h2),
+                           detected=colSums(h2 > 0), sample="h2")
+h3_detected = data.frame(cell=colnames(h3), total=colSums(h3),
+                           detected=colSums(h3 > 0), sample="h3")
+detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected)
+ggplot(detected, aes(cell, detected)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_wrap(~sample, scale='free') +
+  theme_bw() + scale_x_discrete(breaks=NULL)
+```
