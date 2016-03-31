@@ -17,8 +17,16 @@ knitr::opts_chunk$set(tidy=TRUE, highlight=TRUE, dev="png",
                message=FALSE, prompt=TRUE, comment='', fig.cap='')
 ```
 
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(biomaRt)
+library(pheatmap)
+```
+
 # Overview
-This is looking at a first sequencing run of single cells from the proximal tubule.
+This is looking at a first sequencing run of single cells.
 There are three samples, `H1`, `H2` and `H3`. There is some prior knowledge that
 the `H1` sample might have some quality problems.
 
@@ -96,19 +104,61 @@ ggplot(h3_bc, aes(rank, count)) +
   ggtitle("H3 barcode count distribution")
 ```
 
-## Counts
-Here we compare the counts for the K562 data as well as for
-each of the proximal tubule samples, using several different metrics.
+# Count based quality control
+Here we compare the counts for the K562 data as well as for each of the proximal
+tubule samples, using several different metrics. We counted at the level of
+the transcript, so before continuing we will collapse the transcript level
+counts to gene level counts by summing the counts for each transcript for each
+gene.
 
 ```{r}
-k562 = read.table("metadata/k562.counts", header=TRUE, sep=",", row.names="gene")
-count_files = file.path("umis", samples, paste(samples, ".counts", sep=""))
-h1 = read.table(count_files[1], header=TRUE, sep=",", row.names="gene")
-h2 = read.table(count_files[2], header=TRUE, sep=",", row.names="gene")
-h3 = read.table(count_files[3], header=TRUE, sep=",", row.names="gene")
+mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+               dataset="mmusculus_gene_ensembl",
+               host = "jul2015.archive.ensembl.org")
+conversions = getBM(attributes=c("ensembl_gene_id",
+                                 "ensembl_transcript_id", "mgi_symbol"), mart=mart)
+load_counts = function(count_file) {
+  counts = read.table(count_file, header=TRUE, sep=",")
+  counts = counts %>%
+    dplyr::left_join(conversions, c("gene"="ensembl_transcript_id")) %>%
+    dplyr::filter(mgi_symbol != "") %>%
+    dplyr::select(-gene, -ensembl_gene_id) %>%
+    tidyr::gather(cell, count, -mgi_symbol) %>%
+    dplyr::group_by(cell, mgi_symbol) %>%
+    dplyr::summarise(counts=sum(count)) %>%
+    tidyr::spread(cell, counts, fill=0)
+  counts = as.data.frame(counts)
+  rownames(counts) = counts$mgi_symbol
+  counts$mgi_symbol = NULL
+  return(counts)
+  }
 ```
 
-### Genes Detected
+```{r}
+k562 = read.table("metadata/k562.counts", header=TRUE, sep=",") %>%
+  tidyr::separate(gene, into=c("transcript", "symbol"), sep='\\|') %>%
+  dplyr::select(-transcript) %>%
+  tidyr::gather(cell, count, -symbol) %>%
+  dplyr::group_by(cell, symbol) %>%
+  dplyr::summarise(counts=sum(count)) %>%
+  tidyr::spread(cell, counts, fill=0)
+k562 = as.data.frame(k562)
+rownames(k562) = k562$symbol
+k562$symbol = NULL
+count_files = file.path("umis", samples, paste(samples, ".counts", sep=""))
+h1 = load_counts(count_files[1])
+h2 = load_counts(count_files[2])
+h3 = load_counts(count_files[3])
+```
+
+## Genes Detected
+
+The H2-H3 samples have much less genes detected. This makes sense because
+the samples were sequenced much less deeply. However we see somewhere
+around a 10th of the genes detected which is quite a low amount. The
+distribution of genes detected is similar, but there is a sharp dropoff
+in genes detected for the H1-H3 samples compared to the K562 sample.
+
 ```{r}
 k562_detected = data.frame(cell=colnames(k562), total=colSums(k562),
                            detected=colSums(k562 > 0), sample="k562")
@@ -119,8 +169,214 @@ h2_detected = data.frame(cell=colnames(h2), total=colSums(h2),
 h3_detected = data.frame(cell=colnames(h3), total=colSums(h3),
                            detected=colSums(h3 > 0), sample="h3")
 detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected)
-ggplot(detected, aes(cell, detected)) +
+detected = transform(detected, cell=reorder(cell, -detected))
+
+ggplot(detected, aes(reorder(cell, detected), detected)) +
   geom_bar(stat='identity', position='dodge') +
   facet_wrap(~sample, scale='free') +
-  theme_bw() + scale_x_discrete(breaks=NULL)
+  theme_bw() + scale_x_discrete(breaks=NULL) + xlab("cell") + ylab("genes detected")
 ```
+
+We can also try to measure the complexity of the library, looking at how many
+different genes are detected plotted against the total number of counts. Here
+we can see that these libraries have a fairly poor distribution of counts.
+
+```{r}
+ggplot(detected, aes(total, detected, color=sample)) + geom_point() +
+  scale_y_log10() +
+  scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
+  ylab("genes detected")
+```
+
+We couldn't identify a very good cutoff for number of reads looking at the
+barcode distribution because we were missing the dip. We can see, however, that
+even if we applied a pretty stringent cutoff we'd still have many cells with
+a poor number of genes detected per read. Here we take just the top 100 cells
+and replot them and it still looks pretty grim:
+
+```{r}
+top_100 = detected %>% group_by(sample) %>% top_n(100, total)
+ggplot(top_100, aes(total, detected, color=sample)) + geom_point() +
+  scale_y_log10() +
+  scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
+  ylab("genes detected")
+```
+
+## Number of cells genes are expressed
+```{r}
+k562_detected = data.frame(gene=rownames(k562), total=rowSums(k562),
+                           detected=rowSums(k562 > 0), sample="k562")
+h1_detected = data.frame(gene=rownames(h1), total=rowSums(h1),
+                           detected=rowSums(h1 > 0), sample="h1")
+h2_detected = data.frame(gene=rownames(h2), total=rowSums(h2),
+                           detected=rowSums(h2 > 0), sample="h2")
+h3_detected = data.frame(gene=rownames(h3), total=rowSums(h3),
+                         detected=rowSums(h3 > 0), sample="h3")
+detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected)
+detected = transform(detected, gene=reorder(gene, -detected))
+detected = subset(detected, total > 100)
+ggplot(detected, aes(reorder(gene, detected), detected)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_wrap(~sample, scale='free') +
+  theme_bw() + scale_x_discrete(breaks=NULL) + xlab("genes") + ylab("cells detected")
+```
+
+## Most variable genes {.tabset}
+Here we take a shot at identifying the most variable genes to do PCA with,
+it is tough with the samples we have because they are very low cou`nts.
+
+### K562
+```{r}
+library(Seurat)
+k562.dat = k562
+colnames(k562.dat) = paste(colnames(k562.dat), "k562", sep="_")
+k562.seurat = new("seurat", raw.data=log(k562.dat + 1))
+k562.seurat = setup(k562.seurat, project="k562", min.cells=3, min.genes=500,
+                    is.expr=0.01, names.field=2, names.delim="_")
+k562.seurat=mean.var.plot(k562.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+### H1
+```{r}
+h1.dat = h1
+colnames(h1.dat) = paste(colnames(h1.dat), "h1", sep="_")
+h1.seurat = new("seurat", raw.data=log(h1.dat + 1))
+h1.seurat = setup(h1.seurat, project="h1", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h1.seurat=mean.var.plot(h1.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+### H2
+```{r}
+h2.dat = h2
+colnames(h2.dat) = paste(colnames(h2.dat), "h2", sep="_")
+h2.seurat = new("seurat", raw.data=log(h2.dat + 1))
+h2.seurat = setup(h2.seurat, project="h2", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h2.seurat=mean.var.plot(h2.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+### H3
+```{r}
+h3.dat = h3
+colnames(h3.dat) = paste(colnames(h3.dat), "h3", sep="_")
+h3.seurat = new("seurat", raw.data=log(h3.dat + 1))
+h3.seurat = setup(h3.seurat, project="h3", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h3.seurat=mean.var.plot(h3.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+## PCA {.tabset}
+Just to see, even though the variable genes identified looks wonky,
+in these samples, we ran PCA on all of the samples to see if any groups pop out.
+
+### K562
+```{r}
+k562.seurat=pca(k562.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(k562.seurat,pt.size = 2)
+```
+
+### H1
+```{r}
+h1.seurat=pca(h1.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h1.seurat,pt.size = 2)
+```
+
+### H2
+```{r}
+h2.seurat=pca(h2.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h2.seurat,pt.size = 2)
+```
+
+### H3
+```{r}
+h3.seurat=pca(h3.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h3.seurat,pt.size = 2)
+```
+
+## Heatmaps of top 250 expressed genes {.tabset}
+We can see the top 250 expressed genes have very variable expression across
+the cells. There are many cells where there is no expression; the K562 cells
+don't have this issue.
+
+```{r}
+top_200_heatmap = function(counts) {
+  counts = as.matrix(counts)
+  counts = head(counts[order(rowSums(counts), decreasing=TRUE),], 200)
+  pheatmap(log(counts + 1), show_rownames=FALSE, show_colnames=FALSE)
+}
+```
+
+### K562
+```{r}
+top_200_heatmap(k562)
+```
+
+### H1
+```{r}
+top_200_heatmap(h1)
+```
+
+### H2
+```{r}
+top_200_heatmap(h2)
+```
+
+### H3
+```{r}
+top_200_heatmap(h3)
+```
+
+## Housekeeping genes {.tabset}
+I pulled a set of housekeeping genes from
+[Evidence Based Selection of Housekeeping Genes](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0000898) and converted them to human and mouse symbols. Then
+I made heatmaps for all of the housekeeping genes. We can see that for the K562 sample,
+most of the housekeeping genes are expressed strongly whereas in the H1-H3 samples,
+there is spare expression of the housekeeping genes.
+
+```{r}
+hk = as.character(read.table("metadata/hk.txt", header=FALSE)[, "V1"])
+hk = c(hk, c("Actb", "Gapdh"))
+human_hk = as.character(read.table("metadata/human-hk.txt", header=FALSE)[, "V1"])
+human_hk = c(human_hk, c("Actb", "Gapdh"))
+housekeeping_heatmap = function(counts, hk) {
+  counts = counts[rownames(counts) %in% hk,]
+  pheatmap(log(counts + 1), show_rownames=TRUE, show_colnames=FALSE)
+}
+```
+
+### K562
+```{r}
+housekeeping_heatmap(k562, human_hk)
+```
+
+### H1
+```{r}
+housekeeping_heatmap(h1, hk)
+```
+
+### H2
+```{r}
+housekeeping_heatmap(h2, hk)
+```
+
+### H3
+```{r}
+housekeeping_heatmap(h3, hk)
+```
+
+# Summary
+It is hard to say what might be the cause of the problems we identified. If we
+could see the characteristic dip in the barcode distribution like we did for
+K562, I would feel pretty confident in recomending sequencing these samples some
+more. Since we do not see that dip, I'm not sure what to think. One thing we
+could do is to subsample the FASTQ files from the K562 sample down to a similar
+amount for these cells and rerun it. If we do not see the barcode dip then we
+can be more confident that sequencing some more might help with these samples.
+
+I'm not 100% done looking at the data, but I just wanted to put this report up
+since it took longer than we estimated. Troubleshooting always takes longer than
+when the data looks clean.
+
+We should get in touch with Allon's group and ask what he thinks about this as
+well.
