@@ -266,6 +266,26 @@ h3.seurat = setup(h3.seurat, project="h3", min.cells=3, min.genes=500, is.expr=0
 h3.seurat=mean.var.plot(h3.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
+## Most variable gene tables {.tabset}
+### K562
+```{r}
+k562.seurat@var.genes
+```
+
+### H1
+```{r}
+h1.seurat@var.genes
+```
+### H2
+```{r}
+h2.seurat@var.genes
+```
+
+### H3
+```{r}
+h3.seurat@var.genes
+```
+
 ## PCA {.tabset}
 Just to see, even though the variable genes identified looks wonky,
 in these samples, we ran PCA on all of the samples to see if any groups pop out.
