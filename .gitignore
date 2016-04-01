@@ -1,0 +1,3 @@
+*.Rhistory
+*/analysis_cache
+*umis*
