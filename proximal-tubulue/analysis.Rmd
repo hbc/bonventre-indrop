@@ -47,7 +47,7 @@ samples = c("H1", "H2", "H3")
 barcode_files = file.path("umis", samples, "cb-histogram.txt")
 ```
 
-### K562 experiment
+### K562
 
 ```{r}
 K562_bc = read.table("metadata/k562-histogram.txt", header=FALSE, sep="\t",
@@ -55,6 +55,21 @@ K562_bc = read.table("metadata/k562-histogram.txt", header=FALSE, sep="\t",
 colnames(K562_bc) = c("barcode", "count")
 K562_bc$rank = as.numeric(rownames(K562_bc))
 ggplot(K562_bc, aes(rank, count)) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_point() +
+  theme_bw() +
+  ggtitle("K562 barcode count distribution")
+```
+
+### K562 (60 million)
+
+```{r}
+K562_small = read.table("metadata/k562-histogram-60million.txt", header=FALSE, sep="\t",
+                     nrows=100000)
+colnames(K562_small) = c("barcode", "count")
+K562_small$rank = as.numeric(rownames(K562_small))
+ggplot(K562_small, aes(rank, count)) +
   scale_x_log10() +
   scale_y_log10() +
   geom_point() +
@@ -132,20 +147,45 @@ load_counts = function(count_file) {
 ```
 
 ```{r}
-k562 = read.table("metadata/k562.counts", header=TRUE, sep=",") %>%
-  tidyr::separate(gene, into=c("transcript", "symbol"), sep='\\|') %>%
-  dplyr::select(-transcript) %>%
-  tidyr::gather(cell, count, -symbol) %>%
-  dplyr::group_by(cell, symbol) %>%
-  dplyr::summarise(counts=sum(count)) %>%
-  tidyr::spread(cell, counts, fill=0)
-k562 = as.data.frame(k562)
-rownames(k562) = k562$symbol
-k562$symbol = NULL
+load_k562 = function(count_file) {
+  k562 = read.table(count_file, header=TRUE, sep=",") %>%
+    tidyr::separate(gene, into=c("transcript", "symbol"), sep='\\|') %>%
+    dplyr::select(-transcript) %>%
+    tidyr::gather(cell, count, -symbol) %>%
+    dplyr::group_by(cell, symbol) %>%
+    dplyr::summarise(counts=sum(count)) %>%
+    tidyr::spread(cell, counts, fill=0)
+  k562 = as.data.frame(k562)
+  rownames(k562) = k562$symbol
+  k562$symbol = NULL
+  return(k562)
+}
+```
+
+```{r}
+k562 = load_k562("metadata/k562.counts")
+k562_pseudo = load_k562("metadata/k562-pseudo-60million.counts")
+k562_quasi = load_k562("metadata/k562-quasi-60million.counts")
 count_files = file.path("umis", samples, paste(samples, ".counts", sep=""))
 h1 = load_counts(count_files[1])
 h2 = load_counts(count_files[2])
 h3 = load_counts(count_files[3])
+```
+
+We'll look at just the top 150 cells with the most counts in each sample, so we
+can compare more easily to the K562 cells.
+
+```{r}
+top_n_cell = function(counts, n=150) {
+  counts = counts[, head(order(colSums(counts), decreasing=TRUE), n)]
+  return(counts)
+}
+k562 = top_n_cell(k562)
+k562_pseudo = top_n_cell(k562_pseudo)
+k562_quasi = top_n_cell(k562_quasi)
+h1 = top_n_cell(h1)
+h2 = top_n_cell(h2)
+h3 = top_n_cell(h3)
 ```
 
 ## Genes Detected
@@ -159,13 +199,20 @@ in genes detected for the H1-H3 samples compared to the K562 sample.
 ```{r}
 k562_detected = data.frame(cell=colnames(k562), total=colSums(k562),
                            detected=colSums(k562 > 0), sample="k562")
+k562_pseudo_detected = data.frame(cell=colnames(k562_pseudo),
+                                  total=colSums(k562_pseudo),
+                                  detected=colSums(k562_pseudo > 0),
+                                  sample="k562_pseudo")
+k562_quasi_detected = data.frame(cell=colnames(k562_quasi), total=colSums(k562_quasi),
+                           detected=colSums(k562_quasi > 0), sample="k562_quasi")
 h1_detected = data.frame(cell=colnames(h1), total=colSums(h1),
                            detected=colSums(h1 > 0), sample="h1")
 h2_detected = data.frame(cell=colnames(h2), total=colSums(h2),
                            detected=colSums(h2 > 0), sample="h2")
 h3_detected = data.frame(cell=colnames(h3), total=colSums(h3),
                            detected=colSums(h3 > 0), sample="h3")
-detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected)
+detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected,
+                 k562_pseudo_detected, k562_quasi_detected)
 detected = transform(detected, cell=reorder(cell, -detected))
 
 ggplot(detected, aes(reorder(cell, detected), detected)) +
@@ -203,13 +250,20 @@ ggplot(top_100, aes(total, detected, color=sample)) + geom_point() +
 ```{r}
 k562_detected = data.frame(gene=rownames(k562), total=rowSums(k562),
                            detected=rowSums(k562 > 0), sample="k562")
+k562_pseudo_detected = data.frame(gene=rownames(k562_pseudo),
+                                  total=rowSums(k562_pseudo),
+                                  detected=rowSums(k562_pseudo > 0),
+                                  sample="k562_pseudo")
+k562_quasi_detected = data.frame(gene=rownames(k562_quasi), total=rowSums(k562_quasi),
+                           detected=rowSums(k562_quasi > 0), sample="k562_quasi")
 h1_detected = data.frame(gene=rownames(h1), total=rowSums(h1),
                            detected=rowSums(h1 > 0), sample="h1")
 h2_detected = data.frame(gene=rownames(h2), total=rowSums(h2),
                            detected=rowSums(h2 > 0), sample="h2")
 h3_detected = data.frame(gene=rownames(h3), total=rowSums(h3),
                          detected=rowSums(h3 > 0), sample="h3")
-detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected)
+detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected,
+                 k562_quasi_detected, k562_pseudo_detected)
 detected = transform(detected, gene=reorder(gene, -detected))
 detected = subset(detected, total > 100)
 ggplot(detected, aes(reorder(gene, detected), detected)) +
@@ -367,6 +421,16 @@ housekeeping_heatmap = function(counts, hk) {
 housekeeping_heatmap(k562, human_hk)
 ```
 
+### K562 pseudo
+```{r}
+housekeeping_heatmap(k562_pseudo, human_hk)
+```
+
+### K562 quasi
+```{r}
+housekeeping_heatmap(k562_quasi, human_hk)
+```
+
 ### H1
 ```{r}
 housekeeping_heatmap(h1, hk)
@@ -386,14 +450,8 @@ housekeeping_heatmap(h3, hk)
 It is hard to say what might be the cause of the problems we identified. If we
 could see the characteristic dip in the barcode distribution like we did for
 K562, I would feel pretty confident in recomending sequencing these samples some
-more. Since we do not see that dip, I'm not sure what to think. One thing we
-could do is to subsample the FASTQ files from the K562 sample down to a similar
-amount for these cells and rerun it. If we do not see the barcode dip then we
-can be more confident that sequencing some more might help with these samples.
+more. Since we do not see that dip, I'm not sure what to think.
 
-I'm not 100% done looking at the data, but I just wanted to put this report up
-since it took longer than we estimated. Troubleshooting always takes longer than
-when the data looks clean.
-
-We should get in touch with Allon's group and ask what he thinks about this as
-well.
+I subsampled the K562 data and reran it, the distribution looks exactly the same
+and has the dip, so it isn't due to the depth of sequencing. Next step is
+to look at the housekeeping genes.
