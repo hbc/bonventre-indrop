@@ -127,14 +127,15 @@ gene.
 mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
                dataset="mmusculus_gene_ensembl",
                host = "jul2015.archive.ensembl.org")
-conversions = getBM(attributes=c("ensembl_gene_id",
+conversions = getBM(attributes=c("ensembl_gene_id", "refseq_mrna",
                                  "ensembl_transcript_id", "mgi_symbol"), mart=mart)
 load_counts = function(count_file) {
   counts = read.table(count_file, header=TRUE, sep=",")
   counts = counts %>%
-    dplyr::left_join(conversions, c("gene"="ensembl_transcript_id")) %>%
+    tidyr::separate(gene, into=c("transcript", "version"), sep='\\.', fill="right") %>%
+    dplyr::left_join(conversions, c("transcript"="ensembl_transcript_id")) %>%
     dplyr::filter(mgi_symbol != "") %>%
-    dplyr::select(-gene, -ensembl_gene_id) %>%
+    dplyr::select(-transcript, -version, -ensembl_gene_id, -refseq_mrna) %>%
     tidyr::gather(cell, count, -mgi_symbol) %>%
     dplyr::group_by(cell, mgi_symbol) %>%
     dplyr::summarise(counts=sum(count)) %>%
@@ -142,6 +143,44 @@ load_counts = function(count_file) {
   counts = as.data.frame(counts)
   rownames(counts) = counts$mgi_symbol
   counts$mgi_symbol = NULL
+  return(counts)
+  }
+load_bcbio_refseq = function(count_file) {
+  counts = read.table(count_file, header=TRUE, sep=",")
+  counts = counts %>%
+    dplyr::left_join(conversions, c("gene"="refseq_mrna")) %>%
+    dplyr::filter(mgi_symbol != "") %>%
+    dplyr::select(-gene, -ensembl_gene_id, -ensembl_transcript_id) %>%
+    tidyr::gather(cell, count, -mgi_symbol) %>%
+    dplyr::group_by(cell, mgi_symbol) %>%
+    dplyr::summarise(counts=sum(count)) %>%
+    tidyr::spread(cell, counts, fill=0)
+  counts = as.data.frame(counts)
+  rownames(counts) = counts$mgi_symbol
+  counts$mgi_symbol = NULL
+  return(counts)
+  }
+```
+
+```{r}
+mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+               dataset="hsapiens_gene_ensembl",
+               host = "jul2015.archive.ensembl.org")
+hconversions = getBM(attributes=c("ensembl_gene_id", "refseq_mrna",
+                                 "ensembl_transcript_id", "hgnc_symbol"), mart=mart)
+load_hcounts = function(count_file) {
+  counts = read.table(count_file, header=TRUE, sep=",")
+  counts = counts %>%
+    dplyr::left_join(hconversions, c("gene"="ensembl_transcript_id")) %>%
+    dplyr::filter(hgnc_symbol != "") %>%
+    dplyr::select(-gene, -ensembl_gene_id, -refseq_mrna) %>%
+    tidyr::gather(cell, count, -hgnc_symbol, -hgnc_symbol) %>%
+    dplyr::group_by(cell, hgnc_symbol) %>%
+    dplyr::summarise(counts=sum(count)) %>%
+    tidyr::spread(cell, counts, fill=0)
+  counts = as.data.frame(counts)
+  rownames(counts) = counts$hgnc_symbol
+  counts$hgnc_symbol = NULL
   return(counts)
   }
 ```
@@ -158,18 +197,23 @@ load_k562 = function(count_file) {
   k562 = as.data.frame(k562)
   rownames(k562) = k562$symbol
   k562$symbol = NULL
+  k562 = k562[!grepl("ERCC", rownames(k562)),]
   return(k562)
 }
 ```
 
 ```{r}
-k562 = load_k562("metadata/k562.counts")
-k562_pseudo = load_k562("metadata/k562-pseudo-60million.counts")
-k562_quasi = load_k562("metadata/k562-quasi-60million.counts")
-count_files = file.path("umis", samples, paste(samples, ".counts", sep=""))
+count_files = file.path("no-ncrna", samples, paste(samples, ".counts", sep=""))
 h1 = load_counts(count_files[1])
 h2 = load_counts(count_files[2])
 h3 = load_counts(count_files[3])
+count_files = file.path("new-counts", "umis", samples,
+                        paste(samples, ".counts", sep=""))
+h1_refseq = load_bcbio_refseq(count_files[1])
+h2_refseq = load_bcbio_refseq(count_files[2])
+h3_refseq = load_bcbio_refseq(count_files[3])
+k562_grch37 = load_hcounts("metadata/k562-GRCh37.counts")
+k562_refseq = load_k562("metadata/k562-refseq.counts")
 ```
 
 We'll look at just the top 150 cells with the most counts in each sample, so we
@@ -180,12 +224,14 @@ top_n_cell = function(counts, n=150) {
   counts = counts[, head(order(colSums(counts), decreasing=TRUE), n)]
   return(counts)
 }
-k562 = top_n_cell(k562)
-k562_pseudo = top_n_cell(k562_pseudo)
-k562_quasi = top_n_cell(k562_quasi)
+k562_refseq = top_n_cell(k562_refseq)
+k562_grch37 = top_n_cell(k562_grch37)
 h1 = top_n_cell(h1)
 h2 = top_n_cell(h2)
 h3 = top_n_cell(h3)
+h1_refseq = top_n_cell(h1_refseq)
+h2_refseq = top_n_cell(h2_refseq)
+h3_refseq = top_n_cell(h3_refseq)
 ```
 
 ## Genes Detected
@@ -197,22 +243,29 @@ distribution of genes detected is similar, but there is a sharp dropoff
 in genes detected for the H1-H3 samples compared to the K562 sample.
 
 ```{r}
-k562_detected = data.frame(cell=colnames(k562), total=colSums(k562),
-                           detected=colSums(k562 > 0), sample="k562")
-k562_pseudo_detected = data.frame(cell=colnames(k562_pseudo),
-                                  total=colSums(k562_pseudo),
-                                  detected=colSums(k562_pseudo > 0),
-                                  sample="k562_pseudo")
-k562_quasi_detected = data.frame(cell=colnames(k562_quasi), total=colSums(k562_quasi),
-                           detected=colSums(k562_quasi > 0), sample="k562_quasi")
+k562_grch37_detected = data.frame(cell=colnames(k562_grch37),
+                                  total=colSums(k562_grch37),
+                                  detected=colSums(k562_grch37 > 0),
+                                  sample="k562_grch37")
+k562_refseq_detected = data.frame(cell=colnames(k562_refseq),
+                                  total=colSums(k562_refseq),
+                                  detected=colSums(k562_refseq > 0),
+                                  sample="k562_refseq")
 h1_detected = data.frame(cell=colnames(h1), total=colSums(h1),
                            detected=colSums(h1 > 0), sample="h1")
 h2_detected = data.frame(cell=colnames(h2), total=colSums(h2),
                            detected=colSums(h2 > 0), sample="h2")
 h3_detected = data.frame(cell=colnames(h3), total=colSums(h3),
                            detected=colSums(h3 > 0), sample="h3")
-detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected,
-                 k562_pseudo_detected, k562_quasi_detected)
+h1_refseq_detected = data.frame(cell=colnames(h1_refseq), total=colSums(h1_refseq),
+                           detected=colSums(h1_refseq > 0), sample="h1_refseq")
+h2_refseq_detected = data.frame(cell=colnames(h2_refseq), total=colSums(h2_refseq),
+                           detected=colSums(h2_refseq > 0), sample="h2_refseq")
+h3_refseq_detected = data.frame(cell=colnames(h3_refseq), total=colSums(h3_refseq),
+                           detected=colSums(h3_refseq > 0), sample="h3_refseq")
+detected = rbind(k562_grch37_detected, h1_detected, h2_detected, h3_detected,
+                 k562_refseq_detected, h1_detected, h2_detected, h3_detected,
+                 h1_refseq_detected, h2_refseq_detected, h3_refseq_detected)
 detected = transform(detected, cell=reorder(cell, -detected))
 
 ggplot(detected, aes(reorder(cell, detected), detected)) +
@@ -221,49 +274,72 @@ ggplot(detected, aes(reorder(cell, detected), detected)) +
   theme_bw() + scale_x_discrete(breaks=NULL) + xlab("cell") + ylab("genes detected")
 ```
 
+## Total counts
+For the K562 samples, the RefSeq annotation captures more counts per cell.
+This isn't true of the H1-H3 samples, though.
+```{r ensembl-vs-refseq-boxplot}
+ggplot(detected, aes(sample, total)) +
+  geom_boxplot() +
+  theme_bw() +
+  ylab("total counts per cell") +
+  xlab("")
+```
+
+## Complexity
 We can also try to measure the complexity of the library, looking at how many
 different genes are detected plotted against the total number of counts. Here
-we can see that these libraries have a fairly poor distribution of counts.
+we can see that these libraries have a fairly poor distribution of counts when
+using the Ensembl annotation for H1-H3. Using the RefSeq annotation, it looks
+much better. The Ensembl annotation has a bunch of non-coding RNA and
+non-polyA RNA annotated, much more than the RefSeq annotation which could
+be leading to the particularly poor quality using the Ensembl annotation.
+As a comparison, the K562 sample, however, looks fine using either the Ensembl
+or the RefSeq annotation.
+
+We can see from these plots a poor sequence quality in the libraries, the
+K562 sample has a fairly steep change in genes detected with an increased
+total counts. The H1-H3 samples on the other hand have a much less steep
+increase, a piece of evidence that these libraries are less complex than
+the K562 lbraries. We are comparing across species here, so the comparison
+isn't a great one.
 
 ```{r}
 ggplot(detected, aes(total, detected, color=sample)) + geom_point() +
-  scale_y_log10() +
-  scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
-  ylab("genes detected")
-```
-
-We couldn't identify a very good cutoff for number of reads looking at the
-barcode distribution because we were missing the dip. We can see, however, that
-even if we applied a pretty stringent cutoff we'd still have many cells with
-a poor number of genes detected per read. Here we take just the top 100 cells
-and replot them and it still looks pretty grim:
-
-```{r}
-top_100 = detected %>% group_by(sample) %>% top_n(100, total)
-ggplot(top_100, aes(total, detected, color=sample)) + geom_point() +
-  scale_y_log10() +
   scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
   ylab("genes detected")
 ```
 
 ## Number of cells genes are expressed
+Here we can see a steep dropoff for number of cells a gene is expressed
+in the H1-H3 samples, meaning there are fewer genes detected as expressed
+in every cell. The K562 samples, by comparison, have a much less sharp
+falloff. This indicates that there might be poor capture of RNA from the cells,
+leading to a less complex library.
 ```{r}
-k562_detected = data.frame(gene=rownames(k562), total=rowSums(k562),
-                           detected=rowSums(k562 > 0), sample="k562")
-k562_pseudo_detected = data.frame(gene=rownames(k562_pseudo),
-                                  total=rowSums(k562_pseudo),
-                                  detected=rowSums(k562_pseudo > 0),
-                                  sample="k562_pseudo")
-k562_quasi_detected = data.frame(gene=rownames(k562_quasi), total=rowSums(k562_quasi),
-                           detected=rowSums(k562_quasi > 0), sample="k562_quasi")
+k562_grch37_detected = data.frame(gene=rownames(k562_grch37),
+                                  total=rowSums(k562_grch37),
+                                  detected=rowSums(k562_grch37 > 0),
+                                  sample="k562_grch37")
+k562_refseq_detected = data.frame(gene=rownames(k562_refseq),
+                                  total=rowSums(k562_refseq),
+                                  detected=rowSums(k562_refseq > 0),
+                                  sample="k562_refseq")
 h1_detected = data.frame(gene=rownames(h1), total=rowSums(h1),
                            detected=rowSums(h1 > 0), sample="h1")
 h2_detected = data.frame(gene=rownames(h2), total=rowSums(h2),
                            detected=rowSums(h2 > 0), sample="h2")
 h3_detected = data.frame(gene=rownames(h3), total=rowSums(h3),
                          detected=rowSums(h3 > 0), sample="h3")
-detected = rbind(k562_detected, h1_detected, h2_detected, h3_detected,
-                 k562_quasi_detected, k562_pseudo_detected)
+h1_refseq_detected = data.frame(gene=rownames(h1_refseq), total=rowSums(h1_refseq),
+                           detected=rowSums(h1_refseq > 0), sample="h1_refseq")
+h2_refseq_detected = data.frame(gene=rownames(h2_refseq), total=rowSums(h2_refseq),
+                           detected=rowSums(h2_refseq > 0), sample="h2_refseq")
+h3_refseq_detected = data.frame(gene=rownames(h3_refseq), total=rowSums(h3_refseq),
+                           detected=rowSums(h3_refseq > 0), sample="h3_refseq")
+detected = rbind(k562_grch37_detected, h1_detected, h2_detected, h3_detected,
+                 k562_refseq_detected, h1_refseq_detected, h2_refseq_detected,
+                 h3_refseq_detected)
+detected_df = detected
 detected = transform(detected, gene=reorder(gene, -detected))
 detected = subset(detected, total > 100)
 ggplot(detected, aes(reorder(gene, detected), detected)) +
@@ -276,15 +352,15 @@ ggplot(detected, aes(reorder(gene, detected), detected)) +
 Here we take a shot at identifying the most variable genes to do PCA with,
 it is tough with the samples we have because they are very low cou`nts.
 
-### K562
+### K562 GRCh37
 ```{r}
 library(Seurat)
-k562.dat = k562
-colnames(k562.dat) = paste(colnames(k562.dat), "k562", sep="_")
-k562.seurat = new("seurat", raw.data=log(k562.dat + 1))
-k562.seurat = setup(k562.seurat, project="k562", min.cells=3, min.genes=500,
+k562_grch37.dat = k562_grch37
+colnames(k562_grch37.dat) = paste(colnames(k562_grch37.dat), "k562_grch37", sep="_")
+k562_grch37.seurat = new("seurat", raw.data=log(k562_grch37.dat + 1))
+k562_grch37.seurat = setup(k562_grch37.seurat, project="k562_grch37", min.cells=3, min.genes=500,
                     is.expr=0.01, names.field=2, names.delim="_")
-k562.seurat=mean.var.plot(k562.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+k562_grch37.seurat=mean.var.plot(k562_grch37.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H1
@@ -317,10 +393,40 @@ h3.seurat = setup(h3.seurat, project="h3", min.cells=3, min.genes=500, is.expr=0
 h3.seurat=mean.var.plot(h3.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
+### H1 Refseq
+```{r h1-refseq-pca}
+h1_refseq.dat = h1_refseq
+colnames(h1_refseq.dat) = paste(colnames(h1_refseq.dat), "h1_refseq", sep="_")
+h1_refseq.seurat = new("seurat", raw.data=log(h1_refseq.dat + 1))
+h1_refseq.seurat = setup(h1_refseq.seurat, project="h1_refseq", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h1_refseq.seurat=mean.var.plot(h1_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+### H2 Refseq
+```{r h2-refseq-pca}
+h2_refseq.dat = h2_refseq
+colnames(h2_refseq.dat) = paste(colnames(h2_refseq.dat), "h2_refseq", sep="_")
+h2_refseq.seurat = new("seurat", raw.data=log(h2_refseq.dat + 1))
+h2_refseq.seurat = setup(h2_refseq.seurat, project="h2_refseq", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h2_refseq.seurat=mean.var.plot(h2_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+### H3 Refseq
+```{r h3-refseq-pca}
+h3_refseq.dat = h3_refseq
+colnames(h3_refseq.dat) = paste(colnames(h3_refseq.dat), "h3_refseq", sep="_")
+h3_refseq.seurat = new("seurat", raw.data=log(h3_refseq.dat + 1))
+h3_refseq.seurat = setup(h3_refseq.seurat, project="h3_refseq", min.cells=3, min.genes=500, is.expr=0.01,
+                  names.field=2, names.delim="_")
+h3_refseq.seurat=mean.var.plot(h3_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
 ## Most variable gene tables {.tabset}
-### K562
+### K562 GRCh37
 ```{r}
-k562.seurat@var.genes
+k562_grch37.seurat@var.genes
 ```
 
 ### H1
@@ -337,14 +443,29 @@ h2.seurat@var.genes
 h3.seurat@var.genes
 ```
 
+### H1 Refseq
+```{r}
+h1_refseq.seurat@var.genes
+```
+
+### H2 Refseq
+```{r}
+h2_refseq.seurat@var.genes
+```
+
+### H3 Refseq
+```{r}
+h3_refseq.seurat@var.genes
+```
+
 ## PCA {.tabset}
 Just to see, even though the variable genes identified looks wonky,
 in these samples, we ran PCA on all of the samples to see if any groups pop out.
 
 ### K562
 ```{r}
-k562.seurat=pca(k562.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
-pca.plot(k562.seurat,pt.size = 2)
+k562_grch37.seurat=pca(k562_grch37.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(k562_grch37.seurat,pt.size = 2)
 ```
 
 ### H1
@@ -365,8 +486,27 @@ h3.seurat=pca(h3.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
 pca.plot(h3.seurat,pt.size = 2)
 ```
 
-## Heatmaps of top 250 expressed genes {.tabset}
-We can see the top 250 expressed genes have very variable expression across
+### H1 Refseq
+```{r}
+h1_refseq.seurat=pca(h1_refseq.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h1_refseq.seurat,pt.size = 2)
+```
+
+### H2 Refseq
+```{r}
+h2_refseq.seurat=pca(h2_refseq.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h2_refseq.seurat,pt.size = 2)
+```
+
+### H3 Refseq
+```{r}
+h3_refseq.seurat=pca(h3_refseq.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(h3_refseq.seurat,pt.size = 2)
+```
+
+
+## Heatmaps of top 200 expressed genes {.tabset}
+We can see the top 200 expressed genes have very variable expression across
 the cells. There are many cells where there is no expression; the K562 cells
 don't have this issue.
 
@@ -378,9 +518,14 @@ top_200_heatmap = function(counts) {
 }
 ```
 
-### K562
+### K562 GRCh37
 ```{r}
-top_200_heatmap(k562)
+top_200_heatmap(k562_grch37)
+```
+
+### K562 RefSeq
+```{r}
+top_200_heatmap(k562_refseq)
 ```
 
 ### H1
@@ -396,6 +541,21 @@ top_200_heatmap(h2)
 ### H3
 ```{r}
 top_200_heatmap(h3)
+```
+
+### H1 RefSeq
+```{r}
+top_200_heatmap(h1_refseq)
+```
+
+### H2 RefSeq
+```{r}
+top_200_heatmap(h2_refseq)
+```
+
+### H3 RefSeq
+```{r}
+top_200_heatmap(h3_refseq)
 ```
 
 ## Housekeeping genes {.tabset}
@@ -416,34 +576,44 @@ housekeeping_heatmap = function(counts, hk) {
 }
 ```
 
-### K562
-```{r}
-housekeeping_heatmap(k562, human_hk)
+### K562 GRCh37
+```{r k562-grch37}
+housekeeping_heatmap(k562_grch37, human_hk)
 ```
 
-### K562 pseudo
-```{r}
-housekeeping_heatmap(k562_pseudo, human_hk)
-```
-
-### K562 quasi
-```{r}
-housekeeping_heatmap(k562_quasi, human_hk)
+### K562 RefSeq
+```{r k562-refseq-hk}
+housekeeping_heatmap(k562_refseq, human_hk)
 ```
 
 ### H1
-```{r}
+```{r h1-hk}
 housekeeping_heatmap(h1, hk)
 ```
 
 ### H2
-```{r}
+```{r h2-hk}
 housekeeping_heatmap(h2, hk)
 ```
 
 ### H3
-```{r}
+```{r h3-hk}
 housekeeping_heatmap(h3, hk)
+```
+
+### H1 RefSeq
+```{r h1-refseq-hk}
+housekeeping_heatmap(h1_refseq, hk)
+```
+
+### H2 RefSeq
+```{r h2-refseq-hk}
+housekeeping_heatmap(h2_refseq, hk)
+```
+
+### H3 RefSeq
+```{r h3-refseq-hk}
+housekeeping_heatmap(h3_refseq, hk)
 ```
 
 # Summary
@@ -455,3 +625,15 @@ more. Since we do not see that dip, I'm not sure what to think.
 I subsampled the K562 data and reran it, the distribution looks exactly the same
 and has the dip, so it isn't due to the depth of sequencing. Next step is
 to look at the housekeeping genes.
+
+# Further investigation
+
+## Read QC
+We only end up keeping around 20-25 million reads per sample at the end for each
+sample after trying to match up the barcodes despite having around 60-70 million
+reads per sample.
+
+## Alignment QC
+Aligning to the Ensembl transcripts gives us 40 million total alignments and
+to the RefSeq transcripts about half of that for the H1-H3 samples. The reverse
+is true for the K562 samples.
