@@ -116,6 +116,8 @@ ggplot(h3_bc, aes(rank, count)) +
   ggtitle("H3 barcode count distribution")
 ```
 
+### K562 60 million
+
 # Count based quality control
 Here we compare the counts for the K562 data as well as for each of the proximal
 tubule samples, using several different metrics. We counted at the level of
@@ -623,17 +625,49 @@ K562, I would feel pretty confident in recomending sequencing these samples some
 more. Since we do not see that dip, I'm not sure what to think.
 
 I subsampled the K562 data and reran it, the distribution looks exactly the same
-and has the dip, so it isn't due to the depth of sequencing. Next step is
-to look at the housekeeping genes.
+and has the dip, so it isn't due to the depth of sequencing.
 
-# Further investigation
 
-## Read QC
-We only end up keeping around 20-25 million reads per sample at the end for each
-sample after trying to match up the barcodes despite having around 60-70 million
-reads per sample.
+# Allon's type barcode plots {.tabset}
+This is my interpretation of Allon's barcode plots. The matlab command:
 
-## Alignment QC
-Aligning to the Ensembl transcripts gives us 40 million total alignments and
-to the RefSeq transcripts about half of that for the H1-H3 samples. The reverse
-is true for the K562 samples.
+```
+[fLog xLog] = hist(log10(counts(counts>0)),50);
+y = fLog.*(10.^xLog)/sum(fLog.*(10.^xLog));
+plot(xLog,y*100,'linewidth',2)
+```
+
+`hist` from matlab returns a tuple of `counts` and `centers`. R returns a
+dataframe with `mids` and `counts` as columns. So, the R version of this plot is:
+
+```{r allon-plot, echo=TRUE}
+allon_barcode_plot = function(bcs) {
+  bcs_hist = hist(log10(bcs$count), plot=FALSE, n=50)
+  fLog = bcs_hist$count
+  xLog = bcs_hist$mids
+  y = fLog * (10^xLog) / sum(fLog * (10^xLog))
+  qplot(xLog, y) + geom_point() + theme_bw()
+  }
+```
+
+## K562
+
+```{r k562-allon-plot}
+allon_barcode_plot(K562_small)
+```
+
+## H1
+```{r h1-allon-plot}
+allon_barcode_plot(h1_bc)
+```
+
+## H2
+```{r h2-allon-plot}
+allon_barcode_plot(h2_bc)
+```
+
+## H3
+```{r h3-allon-plot}
+allon_barcode_plot(h3_bc)
+```
+```
