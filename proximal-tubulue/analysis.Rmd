@@ -42,14 +42,14 @@ This may be due to there not being enough depth of sequencing or it may be
 due to the samples having something wrong with them. It would be helpful to
 ask the sequencing core what they think about this.
 
-```{r}
+```{r barcode-setup}
 samples = c("H1", "H2", "H3")
 barcode_files = file.path("umis", samples, "cb-histogram.txt")
 ```
 
 ### K562
 
-```{r}
+```{r k562-barcode}
 K562_bc = read.table("metadata/k562-histogram.txt", header=FALSE, sep="\t",
                      nrows=100000)
 colnames(K562_bc) = c("barcode", "count")
@@ -64,7 +64,7 @@ ggplot(K562_bc, aes(rank, count)) +
 
 ### K562 (60 million)
 
-```{r}
+```{r k562-small-barcode}
 K562_small = read.table("metadata/k562-histogram-60million.txt", header=FALSE, sep="\t",
                      nrows=100000)
 colnames(K562_small) = c("barcode", "count")
@@ -78,7 +78,7 @@ ggplot(K562_small, aes(rank, count)) +
 ```
 
 ### H1
-```{r}
+```{r h1-barcode}
 h1_bc = read.table(barcode_files[1], header=FALSE, sep="\t", nrows=100000)
 colnames(h1_bc) = c("barcode", "count")
 h1_bc$rank = as.numeric(rownames(h1_bc))
@@ -91,7 +91,7 @@ ggplot(h1_bc, aes(rank, count)) +
 ```
 
 ### H2
-```{r}
+```{r h2-barcode}
 h2_bc = read.table(barcode_files[2], header=FALSE, sep="\t", nrows=100000)
 colnames(h2_bc) = c("barcode", "count")
 h2_bc$rank = as.numeric(rownames(h2_bc))
@@ -104,7 +104,7 @@ ggplot(h2_bc, aes(rank, count)) +
 ```
 
 ### H3
-```{r}
+```{r h3-barcode}
 h3_bc = read.table(barcode_files[3], header=FALSE, sep="\t", nrows=100000)
 colnames(h3_bc) = c("barcode", "count")
 h3_bc$rank = as.numeric(rownames(h3_bc))
@@ -116,7 +116,59 @@ ggplot(h3_bc, aes(rank, count)) +
   ggtitle("H3 barcode count distribution")
 ```
 
-### K562 60 million
+# Allon's type barcode plots {.tabset}
+This is an R port of Allon's barcode plots. The matlab command:
+
+```
+[fLog xLog] = hist(log10(counts(counts>0)),50);
+y = fLog.*(10.^xLog)/sum(fLog.*(10.^xLog));
+plot(xLog,y*100,'linewidth',2)
+```
+
+`hist` from matlab returns a tuple of `counts` and `centers`. R returns a
+dataframe with `mids` and `counts` as columns. So, the R version of this plot is:
+
+```{r allon-plot, echo=TRUE}
+allon_barcode_plot = function(bcs, sample) {
+  bcs_hist = hist(log10(bcs$count), plot=FALSE, n=50)
+  fLog = bcs_hist$count
+  xLog = bcs_hist$mids
+  y = fLog * (10^xLog) / sum(fLog * (10^xLog))
+  print(qplot(xLog, y) + geom_point() + theme_bw() + ggtitle(sample))
+  return(data.frame(x=xLog, y=y, sample=sample))
+}
+```
+
+This results in plots where it is easier to call a peak. It looks like we can
+set a rough cutoff of around 10^4 for the H1 and H3 samples. H2 doesn't have
+a clear peak but 10^4 might be a reasonable cutoff.
+
+## K562
+
+```{r k562-allon-plot}
+k562_allon = allon_barcode_plot(K562_small, "K562")
+```
+
+## H1
+```{r h1-allon-plot}
+h1_allon = allon_barcode_plot(h1_bc, "H1")
+```
+
+## H2
+```{r h2-allon-plot}
+h2_allon = allon_barcode_plot(h2_bc, "H2")
+```
+
+## H3
+```{r h3-allon-plot}
+h3_allon = allon_barcode_plot(h3_bc, "H3")
+```
+
+## Combined
+```{r combined-allon-plot}
+vals = rbind(k562_allon, h1_allon, h2_allon, h3_allon)
+ggplot(vals, aes(x, y, color=sample)) + geom_point() + theme_bw()
+```
 
 # Count based quality control
 Here we compare the counts for the K562 data as well as for each of the proximal
@@ -125,7 +177,7 @@ the transcript, so before continuing we will collapse the transcript level
 counts to gene level counts by summing the counts for each transcript for each
 gene.
 
-```{r}
+```{r biomart-lookup}
 mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
                dataset="mmusculus_gene_ensembl",
                host = "jul2015.archive.ensembl.org")
@@ -164,7 +216,7 @@ load_bcbio_refseq = function(count_file) {
   }
 ```
 
-```{r}
+```{r biomart-lookup-human}
 mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
                dataset="hsapiens_gene_ensembl",
                host = "jul2015.archive.ensembl.org")
@@ -187,7 +239,7 @@ load_hcounts = function(count_file) {
   }
 ```
 
-```{r}
+```{r k562-load-function}
 load_k562 = function(count_file) {
   k562 = read.table(count_file, header=TRUE, sep=",") %>%
     tidyr::separate(gene, into=c("transcript", "symbol"), sep='\\|') %>%
@@ -204,7 +256,7 @@ load_k562 = function(count_file) {
 }
 ```
 
-```{r}
+```{r load-counts}
 count_files = file.path("no-ncrna", samples, paste(samples, ".counts", sep=""))
 h1 = load_counts(count_files[1])
 h2 = load_counts(count_files[2])
@@ -218,33 +270,29 @@ k562_grch37 = load_hcounts("metadata/k562-GRCh37.counts")
 k562_refseq = load_k562("metadata/k562-refseq.counts")
 ```
 
-We'll look at just the top 150 cells with the most counts in each sample, so we
-can compare more easily to the K562 cells.
+Based on Allon's plots it looks like 10^4 is the cutoff for the H1-H3
+samples. We already used that cutoff when we were deciding which
+cells to count so we won't do any further filtering. We need to filter the
+K562 samples to pick out their peak, which is more like 10^5.
 
-```{r}
-top_n_cell = function(counts, n=150) {
-  counts = counts[, head(order(colSums(counts), decreasing=TRUE), n)]
-  return(counts)
+```{r k562-keep}
+keep_barcodes = function(barcodes, cutoff) {
+  bc = subset(barcodes, count > cutoff)$barcode
+  return(gsub("-", ".", bc))
 }
-k562_refseq = top_n_cell(k562_refseq)
-k562_grch37 = top_n_cell(k562_grch37)
-h1 = top_n_cell(h1)
-h2 = top_n_cell(h2)
-h3 = top_n_cell(h3)
-h1_refseq = top_n_cell(h1_refseq)
-h2_refseq = top_n_cell(h2_refseq)
-h3_refseq = top_n_cell(h3_refseq)
+k562_keep = keep_barcodes(K562_bc, 10^5)
+k562_grch37 = k562_grch37[, k562_keep]
+k562_refseq = k562_refseq[, k562_keep]
 ```
 
 ## Genes Detected
 
-The H2-H3 samples have much less genes detected. This makes sense because
-the samples were sequenced much less deeply. However we see somewhere
-around a 10th of the genes detected which is quite a low amount. The
-distribution of genes detected is similar, but there is a sharp dropoff
-in genes detected for the H1-H3 samples compared to the K562 sample.
+The H2-H3 samples have much less genes detected even when we drop
+the sequencing down of the K562 samples down to 60 million reads.
+The numbers of genes detected between the Ensembl and Refseq
+annotations look similar.
 
-```{r}
+```{r genes-detected-boxplot}
 k562_grch37_detected = data.frame(cell=colnames(k562_grch37),
                                   total=colSums(k562_grch37),
                                   detected=colSums(k562_grch37 > 0),
@@ -266,14 +314,25 @@ h2_refseq_detected = data.frame(cell=colnames(h2_refseq), total=colSums(h2_refse
 h3_refseq_detected = data.frame(cell=colnames(h3_refseq), total=colSums(h3_refseq),
                            detected=colSums(h3_refseq > 0), sample="h3_refseq")
 detected = rbind(k562_grch37_detected, h1_detected, h2_detected, h3_detected,
-                 k562_refseq_detected, h1_detected, h2_detected, h3_detected,
+                 k562_refseq_detected,
                  h1_refseq_detected, h2_refseq_detected, h3_refseq_detected)
 detected = transform(detected, cell=reorder(cell, -detected))
 
+ggplot(detected, aes(sample, detected)) + geom_boxplot() +
+  theme_bw()
+```
+
+Looking at histograms and the boxplots, we see about the same number of genes
+detected irregardless of what annotation we use.
+
+```{r genes-detected-histogram}
 ggplot(detected, aes(reorder(cell, detected), detected)) +
   geom_bar(stat='identity', position='dodge') +
   facet_wrap(~sample, scale='free') +
-  theme_bw() + scale_x_discrete(breaks=NULL) + xlab("cell") + ylab("genes detected")
+  theme_bw() +
+  scale_x_discrete(breaks=NULL) +
+  xlab("cell") +
+  ylab("genes detected")
 ```
 
 ## Total counts
@@ -305,10 +364,10 @@ increase, a piece of evidence that these libraries are less complex than
 the K562 lbraries. We are comparing across species here, so the comparison
 isn't a great one.
 
-```{r}
+```{r complexity}
 ggplot(detected, aes(total, detected, color=sample)) + geom_point() +
-  scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
-  ylab("genes detected")
+ scale_x_log10() + facet_wrap(~sample) + theme_bw() + xlab("total counts") +
+ylab("genes detected")
 ```
 
 ## Number of cells genes are expressed
@@ -317,7 +376,7 @@ in the H1-H3 samples, meaning there are fewer genes detected as expressed
 in every cell. The K562 samples, by comparison, have a much less sharp
 falloff. This indicates that there might be poor capture of RNA from the cells,
 leading to a less complex library.
-```{r}
+```{r cells-per-gene}
 k562_grch37_detected = data.frame(gene=rownames(k562_grch37),
                                   total=rowSums(k562_grch37),
                                   detected=rowSums(k562_grch37 > 0),
@@ -350,12 +409,118 @@ ggplot(detected, aes(reorder(gene, detected), detected)) +
   theme_bw() + scale_x_discrete(breaks=NULL) + xlab("genes") + ylab("cells detected")
 ```
 
-## Most variable genes {.tabset}
-Here we take a shot at identifying the most variable genes to do PCA with,
-it is tough with the samples we have because they are very low cou`nts.
+The H1 samples look pretty bad-- it is interesting to see that there are
+sets of genes which are detected as expressed using the Ensembl annotation
+but not the RefSeq annotation in the H samples.
+
+## Heatmaps of top 200 expressed genes {.tabset}
+We can see the top 200 expressed genes have very variable expression across
+the cells. There are many cells where there is no expression; the K562 cells
+don't have this issue. We can see there are probably cells in the H* samples
+that failed.
+
+```{r}
+top_200_heatmap = function(counts) {
+  counts = as.matrix(counts)
+  counts = head(counts[order(rowSums(counts), decreasing=TRUE),], 200)
+  pheatmap(log(counts + 1), show_rownames=FALSE, show_colnames=FALSE)
+}
+```
 
 ### K562 GRCh37
 ```{r}
+top_200_heatmap(k562_grch37)
+```
+
+### K562 RefSeq
+```{r}
+top_200_heatmap(k562_refseq)
+```
+
+### H1
+```{r}
+top_200_heatmap(h1)
+```
+
+### H2
+```{r}
+top_200_heatmap(h2)
+```
+
+### H3
+```{r}
+top_200_heatmap(h3)
+```
+
+### H1 RefSeq
+```{r}
+top_200_heatmap(h1_refseq)
+```
+
+### H2 RefSeq
+```{r}
+top_200_heatmap(h2_refseq)
+```
+
+### H3 RefSeq
+```{r}
+top_200_heatmap(h3_refseq)
+```
+
+## Drop worst cells
+We'll drop the worst cells from the H* samples, where we define worst
+as the cells with < 500 genes detected. Using 1000 as the cutoff leaves
+us with tens of cells. This gets us down to hundreds.
+
+```{r drop-lowest}
+h1 = h1[, colSums(h1 > 0) > 500]
+h2 = h2[, colSums(h2 > 0) > 500]
+h3 = h3[, colSums(h3 > 0) > 500]
+h1_refseq = h1_refseq[, colSums(h1_refseq > 0) > 500]
+h2_refseq = h2_refseq[, colSums(h2_refseq > 0) > 500]
+h3_refseq = h3_refseq[, colSums(h3_refseq > 0) > 500]
+```
+
+## Heatmaps of top 200 expressed genes after filtering {.tabset}
+This definitely cleaned up the heatmaps, they look much nicer now. Still pretty
+spotty expression considering these are the top expressed genes, though.
+
+### H1
+```{r h1-heatmap-filtered}
+top_200_heatmap(h1)
+```
+
+### H2
+```{r h2-heatmap-filtered}
+top_200_heatmap(h2)
+```
+
+### H3
+```{r h3-heatmap-filtered}
+top_200_heatmap(h3)
+```
+
+### H1 RefSeq
+```{r h1-refseq-heatmap-filtered}
+top_200_heatmap(h1_refseq)
+```
+
+### H2 RefSeq
+```{r h2-refseq-heatmap-filtered}
+top_200_heatmap(h2_refseq)
+```
+
+### H3 RefSeq
+```{r h3-refseq-heatmap-filtered}
+top_200_heatmap(h3_refseq)
+```
+
+## Most variable genes {.tabset}
+Here we take a shot at identifying the most variable genes to do PCA with,
+it is tough with the samples we have because they are very low counts.
+
+### K562 GRCh37
+```{r k562-most-variable}
 library(Seurat)
 k562_grch37.dat = k562_grch37
 colnames(k562_grch37.dat) = paste(colnames(k562_grch37.dat), "k562_grch37", sep="_")
@@ -366,7 +531,7 @@ k562_grch37.seurat=mean.var.plot(k562_grch37.seurat,y.cutoff = 2,do.plot=TRUE,x.
 ```
 
 ### H1
-```{r}
+```{r h1-most-variable}
 h1.dat = h1
 colnames(h1.dat) = paste(colnames(h1.dat), "h1", sep="_")
 h1.seurat = new("seurat", raw.data=log(h1.dat + 1))
@@ -376,7 +541,7 @@ h1.seurat=mean.var.plot(h1.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.
 ```
 
 ### H2
-```{r}
+```{r h2-most-variable}
 h2.dat = h2
 colnames(h2.dat) = paste(colnames(h2.dat), "h2", sep="_")
 h2.seurat = new("seurat", raw.data=log(h2.dat + 1))
@@ -386,7 +551,7 @@ h2.seurat=mean.var.plot(h2.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.
 ```
 
 ### H3
-```{r}
+```{r h3-most-variable}
 h3.dat = h3
 colnames(h3.dat) = paste(colnames(h3.dat), "h3", sep="_")
 h3.seurat = new("seurat", raw.data=log(h3.dat + 1))
@@ -507,58 +672,6 @@ pca.plot(h3_refseq.seurat,pt.size = 2)
 ```
 
 
-## Heatmaps of top 200 expressed genes {.tabset}
-We can see the top 200 expressed genes have very variable expression across
-the cells. There are many cells where there is no expression; the K562 cells
-don't have this issue.
-
-```{r}
-top_200_heatmap = function(counts) {
-  counts = as.matrix(counts)
-  counts = head(counts[order(rowSums(counts), decreasing=TRUE),], 200)
-  pheatmap(log(counts + 1), show_rownames=FALSE, show_colnames=FALSE)
-}
-```
-
-### K562 GRCh37
-```{r}
-top_200_heatmap(k562_grch37)
-```
-
-### K562 RefSeq
-```{r}
-top_200_heatmap(k562_refseq)
-```
-
-### H1
-```{r}
-top_200_heatmap(h1)
-```
-
-### H2
-```{r}
-top_200_heatmap(h2)
-```
-
-### H3
-```{r}
-top_200_heatmap(h3)
-```
-
-### H1 RefSeq
-```{r}
-top_200_heatmap(h1_refseq)
-```
-
-### H2 RefSeq
-```{r}
-top_200_heatmap(h2_refseq)
-```
-
-### H3 RefSeq
-```{r}
-top_200_heatmap(h3_refseq)
-```
 
 ## Housekeeping genes {.tabset}
 I pulled a set of housekeeping genes from
@@ -626,48 +739,3 @@ more. Since we do not see that dip, I'm not sure what to think.
 
 I subsampled the K562 data and reran it, the distribution looks exactly the same
 and has the dip, so it isn't due to the depth of sequencing.
-
-
-# Allon's type barcode plots {.tabset}
-This is my interpretation of Allon's barcode plots. The matlab command:
-
-```
-[fLog xLog] = hist(log10(counts(counts>0)),50);
-y = fLog.*(10.^xLog)/sum(fLog.*(10.^xLog));
-plot(xLog,y*100,'linewidth',2)
-```
-
-`hist` from matlab returns a tuple of `counts` and `centers`. R returns a
-dataframe with `mids` and `counts` as columns. So, the R version of this plot is:
-
-```{r allon-plot, echo=TRUE}
-allon_barcode_plot = function(bcs) {
-  bcs_hist = hist(log10(bcs$count), plot=FALSE, n=50)
-  fLog = bcs_hist$count
-  xLog = bcs_hist$mids
-  y = fLog * (10^xLog) / sum(fLog * (10^xLog))
-  qplot(xLog, y) + geom_point() + theme_bw()
-  }
-```
-
-## K562
-
-```{r k562-allon-plot}
-allon_barcode_plot(K562_small)
-```
-
-## H1
-```{r h1-allon-plot}
-allon_barcode_plot(h1_bc)
-```
-
-## H2
-```{r h2-allon-plot}
-allon_barcode_plot(h2_bc)
-```
-
-## H3
-```{r h3-allon-plot}
-allon_barcode_plot(h3_bc)
-```
-```
