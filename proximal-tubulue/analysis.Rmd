@@ -140,7 +140,7 @@ allon_barcode_plot = function(bcs, sample) {
 ```
 
 This results in plots where it is easier to call a peak. It looks like we can
-set a rough cutoff of around 10^4 for the H1 and H3 samples. H2 doesn't have
+set a rough cutoff of around 10^4 for the H1 and H3 samples. H2_REFSEQ doesn't have
 a clear peak but 10^4 might be a reasonable cutoff.
 
 ## K562
@@ -287,7 +287,7 @@ k562_refseq = k562_refseq[, k562_keep]
 
 ## Genes Detected
 
-The H2-H3 samples have much less genes detected even when we drop
+The H1-H3 samples have much less genes detected even when we drop
 the sequencing down of the K562 samples down to 60 million reads.
 The numbers of genes detected between the Ensembl and Refseq
 annotations look similar.
@@ -313,7 +313,7 @@ h2_refseq_detected = data.frame(cell=colnames(h2_refseq), total=colSums(h2_refse
                            detected=colSums(h2_refseq > 0), sample="h2_refseq")
 h3_refseq_detected = data.frame(cell=colnames(h3_refseq), total=colSums(h3_refseq),
                            detected=colSums(h3_refseq > 0), sample="h3_refseq")
-detected = rbind(k562_grch37_detected, h1_detected, h2_detected, h3_detected,
+detected = rbind(k562_grch37_detected, h1_detected, h2_refseq_detected, h3_detected,
                  k562_refseq_detected,
                  h1_refseq_detected, h2_refseq_detected, h3_refseq_detected)
 detected = transform(detected, cell=reorder(cell, -detected))
@@ -397,7 +397,7 @@ h2_refseq_detected = data.frame(gene=rownames(h2_refseq), total=rowSums(h2_refse
                            detected=rowSums(h2_refseq > 0), sample="h2_refseq")
 h3_refseq_detected = data.frame(gene=rownames(h3_refseq), total=rowSums(h3_refseq),
                            detected=rowSums(h3_refseq > 0), sample="h3_refseq")
-detected = rbind(k562_grch37_detected, h1_detected, h2_detected, h3_detected,
+detected = rbind(k562_grch37_detected, h1_detected, h2_refseq_detected, h3_detected,
                  k562_refseq_detected, h1_refseq_detected, h2_refseq_detected,
                  h3_refseq_detected)
 detected_df = detected
@@ -516,8 +516,10 @@ top_200_heatmap(h3_refseq)
 ```
 
 ## Most variable genes {.tabset}
-Here we take a shot at identifying the most variable genes to do PCA with,
-it is tough with the samples we have because they are very low counts.
+Here we take a shot at identifying the most variable genes to do PCA with, it is
+tough with the samples we have because they are very low counts. I dropped tfile-she
+cutoff to 1.5 so we could have enough variable genes to do jackStraw sampling
+later on.
 
 ### K562 GRCh37
 ```{r k562-most-variable}
@@ -537,7 +539,7 @@ colnames(h1.dat) = paste(colnames(h1.dat), "h1", sep="_")
 h1.seurat = new("seurat", raw.data=log(h1.dat + 1))
 h1.seurat = setup(h1.seurat, project="h1", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h1.seurat=mean.var.plot(h1.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h1.seurat=mean.var.plot(h1.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H2
@@ -547,7 +549,7 @@ colnames(h2.dat) = paste(colnames(h2.dat), "h2", sep="_")
 h2.seurat = new("seurat", raw.data=log(h2.dat + 1))
 h2.seurat = setup(h2.seurat, project="h2", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h2.seurat=mean.var.plot(h2.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h2.seurat=mean.var.plot(h2.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H3
@@ -557,7 +559,7 @@ colnames(h3.dat) = paste(colnames(h3.dat), "h3", sep="_")
 h3.seurat = new("seurat", raw.data=log(h3.dat + 1))
 h3.seurat = setup(h3.seurat, project="h3", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h3.seurat=mean.var.plot(h3.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h3.seurat=mean.var.plot(h3.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H1 Refseq
@@ -567,7 +569,7 @@ colnames(h1_refseq.dat) = paste(colnames(h1_refseq.dat), "h1_refseq", sep="_")
 h1_refseq.seurat = new("seurat", raw.data=log(h1_refseq.dat + 1))
 h1_refseq.seurat = setup(h1_refseq.seurat, project="h1_refseq", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h1_refseq.seurat=mean.var.plot(h1_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h1_refseq.seurat=mean.var.plot(h1_refseq.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H2 Refseq
@@ -577,7 +579,7 @@ colnames(h2_refseq.dat) = paste(colnames(h2_refseq.dat), "h2_refseq", sep="_")
 h2_refseq.seurat = new("seurat", raw.data=log(h2_refseq.dat + 1))
 h2_refseq.seurat = setup(h2_refseq.seurat, project="h2_refseq", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h2_refseq.seurat=mean.var.plot(h2_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h2_refseq.seurat=mean.var.plot(h2_refseq.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ### H3 Refseq
@@ -587,7 +589,7 @@ colnames(h3_refseq.dat) = paste(colnames(h3_refseq.dat), "h3_refseq", sep="_")
 h3_refseq.seurat = new("seurat", raw.data=log(h3_refseq.dat + 1))
 h3_refseq.seurat = setup(h3_refseq.seurat, project="h3_refseq", min.cells=3, min.genes=500, is.expr=0.01,
                   names.field=2, names.delim="_")
-h3_refseq.seurat=mean.var.plot(h3_refseq.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+h3_refseq.seurat=mean.var.plot(h3_refseq.seurat,y.cutoff = 1.5,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
 ```
 
 ## Most variable gene tables {.tabset}
@@ -707,7 +709,7 @@ housekeeping_heatmap(h1, hk)
 ```
 
 ### H2
-```{r h2-hk}
+```{r h2eq-hk}
 housekeeping_heatmap(h2, hk)
 ```
 
@@ -732,10 +734,162 @@ housekeeping_heatmap(h3_refseq, hk)
 ```
 
 # Summary
-It is hard to say what might be the cause of the problems we identified. If we
-could see the characteristic dip in the barcode distribution like we did for
-K562, I would feel pretty confident in recomending sequencing these samples some
-more. Since we do not see that dip, I'm not sure what to think.
+These libraries might not be of good enough quality to do anything with.
+[This paper](http://www.cell.com/cell-systems/fulltext/S2405-4712(16)30109-0)
+came out in late April and did a nice job breaking down what we can expect
+to be able to pull out from very shallow single-cell sequencing data. We have
+on the lower end of what they looked at for many of the cells and have less
+than what they needed to be able to pull out differences between different
+cell types of neurons. Here we are looking at two of the same cell type and
+are looking for what are likely more subtle differences.
 
-I subsampled the K562 data and reran it, the distribution looks exactly the same
-and has the dip, so it isn't due to the depth of sequencing.
+# Transcriptional programs
+We'll do GO ontology of the top 250 highest weighted genes for the first principal
+components and compare the results across the H1-H3 samples. If we're
+seeing similar genes in each sample, that will give us some evidence that
+we're seeing a robust signal at the pathway level.
+
+To do this we pulled out the loadings for the genes along component one from
+the PCA, and then used those genes to do pathway enrichment analysis using
+`clusterProfiler`:
+
+```
+G Yu, LG Wang, Y Han, QY He.
+clusterProfiler: an R package for comparing biological themes among gene clusters.
+OMICS: A Journal of Integrative Biology 2012, 16(5):284-287.
+```
+
+```{r clusterprofiler}
+library(clusterProfiler)
+library(org.Mm.eg.db)
+seurat_clusterprofiler = function(seurat_obj, component, samplename) {
+  universe = rownames(seurat_obj@data)
+  seurat_obj = project.pca(seurat_obj, do.print=FALSE)
+  genes = seurat_obj@pca.x.full[, component, drop=FALSE]
+  genes = rownames(genes)[order(abs(genes[,1]), decreasing=TRUE)][1:250]
+  genes.df = bitr(genes, "SYMBOL", c("ENSEMBL", "ENTREZID"), "org.Mm.eg.db")
+  universe.df = bitr(universe, "SYMBOL", c("ENSEMBL", "ENTREZID"), "org.Mm.eg.db")
+  mf = summary(enrichGO(genes.df$ENTREZID, universe=universe.df$ENTREZID,
+                OrgDb=org.Mm.eg.db,
+                ont="MF",
+                pAdjustMethod="BH",
+                qvalueCutoff=1,
+                pvalueCutoff=1))
+  mf$ont = "MF"
+  cc = summary(enrichGO(genes.df$ENTREZID, universe=universe.df$ENTREZID,
+                OrgDb=org.Mm.eg.db,
+                ont="CC",
+                pAdjustMethod="BH",
+                qvalueCutoff=1,
+                pvalueCutoff=1))
+  cc$ont = "CC"
+  bp = summary(enrichGO(genes.df$ENTREZID, universe=universe.df$ENTREZID,
+                OrgDb=org.Mm.eg.db,
+                ont="BP",
+                pAdjustMethod="BH",
+                qvalueCutoff=1,
+                pvalueCutoff=1))
+  bp$ont = "BP"
+  combined = rbind(cc, mf, bp)
+  combined$samplename = samplename
+  return(combined)}
+
+seurat_clusterprofiler_gsea = function(seurat_obj, component, samplename) {
+  universe = rownames(seurat_obj@data)
+  seurat_obj = project.pca(seurat_obj, do.print=FALSE)
+  genes = seurat_obj@pca.x.full[, component, drop=FALSE]
+  colnames(genes) = c("PC")
+  gene_symbols = rownames(genes)[order(abs(genes[,1]), decreasing=TRUE)]
+  genes$SYMBOL = rownames(genes)
+  genes.df = bitr(gene_symbols, "SYMBOL", c("ENSEMBL", "ENTREZID"), "org.Mm.eg.db")
+  genes.df = genes.df %>% left_join(genes, by="SYMBOL")
+  universe.df = bitr(universe, "SYMBOL", c("ENSEMBL", "ENTREZID"), "org.Mm.eg.db")
+  genes = genes.df[, c("ENTREZID", "PC")] %>% unique()
+  gene_pc = genes[, "PC"]
+  names(gene_pc) = genes$ENTREZID
+  gene_pc = gene_pc[order(gene_pc, decreasing=TRUE)]
+  cc = summary(gseGO(gene_pc, ont="CC", OrgDb=org.Mm.eg.db,
+               nPerm=500, minGSSize=100, pvalueCutoff=1, pAdjustMethod="BH",
+               verbose=TRUE))
+  cc$ont = "CC"
+  mf = summary(gseGO(gene_pc, ont="MF", OrgDb=org.Mm.eg.db,
+               nPerm=500, minGSSize=100, pvalueCutoff=1, pAdjustMethod="BH",
+               verbose=TRUE))
+  mf$ont = "MF"
+  bp = summary(gseGO(gene_pc, ont="bp", OrgDb=org.Mm.eg.db,
+               nPerm=500, minGSSize=100, pvalueCutoff=1, pAdjustMethod="BH",
+               verbose=TRUE))
+  bp$ont = "BP"
+  combined = rbind(cc, mf, bp)
+  combined$samplename = samplename
+  return(combined)
+}
+```
+
+```{r clusterprofile-clustering}
+h1_cp = seurat_clusterprofiler(h1.seurat, 1, "H1")
+h2_cp = seurat_clusterprofiler(h2.seurat, 1, "H2")
+h3_cp = seurat_clusterprofiler(h3.seurat, 1, "H3")
+h1_refseq_cp = seurat_clusterprofiler(h1_refseq.seurat, 1, "H1_refseq")
+h2_refseq_cp = seurat_clusterprofiler(h2_refseq.seurat, 1, "H2_refseq")
+h3_refseq_cp = seurat_clusterprofiler(h3_refseq.seurat, 1, "H3_refseq")
+combinedgo = rbind(h1_cp, h2_cp, h3_cp, h1_refseq_cp, h2_refseq_cp, h3_refseq_cp)
+```
+
+Only the H2 sample has significant hits at the pathway level for the first principal
+component so we can't do much in terms of overlapping the calls between
+the samples.
+
+```{r clusterprofiler-plots}
+siggo = combinedgo %>% dplyr::filter(qvalue < 0.1) %>% group_by(ont, samplename) %>%
+  summarise(sigpaths=n())
+ggplot(siggo, aes(samplename, sigpaths)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_wrap(~ont) +
+  theme_bw() +
+  xlab("") +
+  ylab("significant ontology terms")
+```
+
+Taking the top 250 genes in the PCA is pretty arbitrary. Instead we'll try doing
+GSEA, which looks for sets of genes that are moving in the same direction,
+here direction is the weight along the first principal component.
+
+```{r clusterprofiler-gsea}
+h1_cp_gsea = seurat_clusterprofiler_gsea(h1.seurat, 1, "H1")
+h2_cp_gsea = seurat_clusterprofiler_gsea(h2.seurat, 1, "H2")
+h3_cp_gsea = seurat_clusterprofiler_gsea(h3.seurat, 1, "H3")
+h1_refseq_cp_gsea = seurat_clusterprofiler_gsea(h1_refseq.seurat, 1, "H1_refseq")
+h2_refseq_cp_gsea = seurat_clusterprofiler_gsea(h2_refseq.seurat, 1, "H2_refseq")
+h3_refseq_cp_gsea = seurat_clusterprofiler_gsea(h3_refseq.seurat, 1, "H3_refseq")
+combinedgsea = rbind(h1_cp_gsea, h2_cp_gsea, h3_cp_gsea, h1_refseq_cp_gsea, h2_refseq_cp_gsea, h3_refseq_cp_gsea)
+```
+
+GSEA pulls out some significant terms in the H2 and H3 samples:
+
+```{r clusterprofiler-gsea-plot}
+siggo = combinedgsea %>% dplyr::filter(qvalues < 0.1) %>% group_by(ont, samplename) %>%
+  summarise(sigpaths=n())
+ggplot(siggo, aes(samplename, sigpaths)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_wrap(~ont) +
+  theme_bw() +
+  xlab("") +
+  ylab("significant ontology terms")
+```
+
+The overlap between these ontology terms doesn't look great, however:
+
+```{r upsetR-gsea}
+library(UpSetR)
+sigsets = combinedgsea %>% dplyr::filter(qvalues < 0.1) %>%
+  dplyr::select(ID, Description, samplename) %>%
+  dplyr::group_by(Description, samplename)
+sigsets$value = 1
+sigsets = sigsets %>% tidyr::spread(samplename, value, fill=0)
+ss = data.frame(sigsets)
+upset(ss)
+```
+
+I think we can't do too much with this dataset as it is, the cells are not
+different enough to pick out anything with the quality problems we're having.
