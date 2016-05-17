@@ -1,0 +1,235 @@
+---
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    highlight: zenburn
+    theme: flatly
+---
+
+```{r}
+knitr::opts_chunk$set(tidy=TRUE, highlight=TRUE, dev="png",
+               cache=TRUE, highlight=TRUE, autodep=TRUE, warning=FALSE, error=FALSE,
+               message=FALSE, prompt=TRUE, comment='', fig.cap='')
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(biomaRt)
+library(pheatmap)
+```
+
+# Overview
+This is looking at a sequencing run of single cells. This prep should have
+the same issues as the previous prep which we think was a problem with
+a large amount of free-floating RNA due to dead or dying cells from the
+sorting. We're looking at this data because this run should have
+multiple types of cells and we're hoping that we can pick that out of
+the data before deciding to trash the whole experiment.
+There are three samples, `H1`, `H2` and `H3`. There is some prior knowledge that
+the `H1` sample might have some quality problems.
+
+# Barcode distribution
+
+We'll use Allon's style of barcode plots so we can more clearly see the
+peaks. I loaded all the barcodes so the plot goes down to zero, but it
+takes forever to run so I just chopped off the top 100,000 like before.
+
+```{r read-barcodes}
+bc = read.table("cb-histogram.txt", header=FALSE, sep="\t", nrows=100000)
+bchead = head(bc, 100000)
+colnames(bc) = c("barcode", "count")
+allon_barcode_plot = function(bcs, sample) {
+  bcs_hist = hist(log10(bcs$count), plot=FALSE, n=50)
+  fLog = bcs_hist$count
+  xLog = bcs_hist$mids
+  y = fLog * (10^xLog) / sum(fLog * (10^xLog))
+  print(qplot(xLog, y) + geom_point() + theme_bw() + ggtitle(sample))
+  return(data.frame(x=xLog, y=y, sample=sample))
+}
+allon_barcode_plot(bc, "may")
+```
+
+We can see the same issue as before, there isn't a clean peak like we saw with
+the K562 cells. We eventually landed on an explanation of free floating RNA
+due to cells dying being the culprit.
+
+# Count based quality control
+
+```{r read-counts}
+mart = useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+               dataset="mmusculus_gene_ensembl",
+               host = "jul2015.archive.ensembl.org")
+conversions = getBM(attributes=c("ensembl_gene_id", "refseq_mrna",
+                                 "ensembl_transcript_id", "mgi_symbol"), mart=mart)
+load_counts = function(count_file) {
+  counts = read.table(count_file, header=TRUE, sep=",")
+  counts = counts %>%
+    tidyr::separate(gene, into=c("transcript", "version"), sep='\\.', fill="right") %>%
+    dplyr::left_join(conversions, c("transcript"="ensembl_transcript_id")) %>%
+    dplyr::filter(mgi_symbol != "") %>%
+    dplyr::select(-transcript, -version, -ensembl_gene_id, -refseq_mrna) %>%
+    tidyr::gather(cell, count, -mgi_symbol) %>%
+    dplyr::group_by(cell, mgi_symbol) %>%
+    dplyr::summarise(counts=sum(count)) %>%
+    tidyr::spread(cell, counts, fill=0)
+  counts = as.data.frame(counts)
+  rownames(counts) = counts$mgi_symbol
+  counts$mgi_symbol = NULL
+  return(counts)
+}
+counts = load_counts("may.counts")
+```
+
+# Count based quality control
+## Genes Detected
+Here we can see a bimodal distribution in genes detected, with some cells with
+a very small number of genes detected. We can see even the high end of the
+distribution only has a small number of genes detected < 1000.
+
+```{r genes-detected-histogram}
+gd = data.frame(cell=colnames(counts), total=colSums(counts),
+                detected = colSums(counts > 0), sample="may")
+ggplot(gd, aes(detected)) + geom_histogram() +
+  theme_bw() + scale_x_log10()
+```
+
+## Complexity
+There are some cells that have a high number of counts but a low number of
+genes detected, these probably represent libraries with low complexity.
+
+```{r complexity}
+ggplot(gd, aes(total, detected)) +
+  geom_point() +
+  theme_bw() +
+  xlab("genes detected") +
+  ylab("total counts")
+```
+
+## Subset cells
+```{r subset-cells}
+counts = counts[, subset(gd, detected > 500)$cell]
+```
+
+We'll keep cells with > 500 genes detected. That leaves us with
+`r nrow(counts)` cells to consider.
+
+## Number of cells genes are expressed
+Here again we can see that only a small number of genes are detected in
+the majority of the cells. Most genes are detected in < 100 of the cells.
+```{r cells-per-gene}
+cpg = data.frame(gene=rownames(counts), total=rowSums(counts),
+                 detected=rowSums(counts > 0))
+ggplot(cpg, aes(detected, total)) + geom_point() + scale_y_log10() +
+  theme_bw()
+```
+
+## Heatmap of top 200 expressed genes
+This heatmap looks a little bit better than what we had before, but
+still isn't great considering these are the genes with the highest counts.
+```{r top-200-heatmap-fn}
+top_200_heatmap = function(counts) {
+  counts = as.matrix(counts)
+  counts = head(counts[order(rowSums(counts), decreasing=TRUE),], 200)
+  pheatmap(log(counts + 1), show_rownames=FALSE, show_colnames=FALSE)
+}
+top_200_heatmap(counts)
+```
+
+## Most variable genes
+Here we take a shot at identifying the most variable genes to do PCA with, it is
+tough with the samples we have because they are very low counts. I dropped tfile-she
+cutoff to 1.5 so we could have enough variable genes to do jackStraw sampling
+later on.
+
+```{r most-variable-genes}
+library(Seurat)
+counts.dat = counts
+colnames(counts.dat) = paste(colnames(counts.dat), "counts", sep="_")
+counts.seurat = new("seurat", raw.data=log(counts.dat + 1))
+counts.seurat = setup(counts.seurat, project="counts", min.cells=3, min.genes=500,
+                    is.expr=0.01, names.field=2, names.delim="_")
+counts.seurat=mean.var.plot(counts.seurat,y.cutoff = 2,do.plot=TRUE,x.low.cutoff=0.25,x.high.cutoff=7,fxn.x = expMean,fxn.y=logVarDivMean)
+```
+
+```{r variable-gene-table}
+counts.seurat@var.genes
+```
+
+## PCA
+It does kind of look like there are two populations of cells in these samples.
+
+```{r pca}
+counts.seurat=pca(counts.seurat, pcs.print = 3, genes.print = 5, do.print=FALSE)
+pca.plot(counts.seurat,pt.size = 2)
+```
+
+Projecting all of the genes and taking the top 500 genes with the highest
+loadings makes it look like there are three major of cells.
+
+```{r pca-projection}
+counts.seurat = project.pca(counts.seurat, do.print=FALSE)
+loadings = counts.seurat@pca.x.full
+top = loadings[, 1]
+names(top) = rownames(loadings)
+top = top[order(abs(top), decreasing=TRUE)][1:500]
+pheatmap(log(counts[names(top),] + 1), show_rownames=FALSE, show_colnames=FALSE)
+```
+
+## Housekeeping genes
+I pulled a set of housekeeping genes from
+[Evidence Based Selection of Housekeeping Genes](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0000898) and converted them to human and mouse symbols.
+
+```{r hk-heatmap}
+hk = as.character(read.table("../proximal-tubulue/metadata/hk.txt", header=FALSE)[, "V1"])
+hk = c(hk, c("Actb", "Gapdh"))
+housekeeping_heatmap = function(counts, hk) {
+  counts = counts[rownames(counts) %in% hk,]
+  pheatmap(log(counts + 1), show_rownames=TRUE, show_colnames=FALSE)
+}
+housekeeping_heatmap(counts, hk)
+```
+
+## Marker genes
+
+```{r marker-genes}
+proximal = c("Gpx3", "Tnip1", "Hrsp12", "Hpd", "Hao2", "Ccdc152", "Apom", "Tmem27")
+henle = c("Spp1", "Cryab", "Ctsl1", "S100a1", "S100a6", "Aqp1", "Timp3")
+distal = c("Map3k7", "Atp1a", "Wfdc2", "Dnase1", "Degs2", "Ly6i",
+           "Ctsd", "Tmem52b")
+```
+
+These markers show up in our list of the 500 highest weighted genes in PC1, and
+they are weighted in ways we might expect. The proximal genes have positive PC1
+weightings, the distal genes have negative PC1 weightings and the Henle markers
+are mixed in PC1 and PC2.
+
+```{r show-markers}
+inprox = top[names(top) %in% proximal]
+indist = top[names(top) %in% distal]
+inhenle = top[names(top) %in% henle]
+anno_row = data.frame(marker="proximal", id=names(inprox))
+anno_row = rbind(anno_row, data.frame(marker="distal", id=names(indist)))
+anno_row = rbind(anno_row, data.frame(marker="henle", id=names(inhenle)))
+rownames(anno_row) = anno_row$id
+anno_row = anno_row[, "marker", drop=FALSE]
+```
+
+It looks like there could be more proximal cells than other cells based on
+those markers:
+
+```{r marker-heatmap}
+marker_heatmap = function(counts, anno_row) {
+  counts = counts[rownames(anno_row),]
+  pheatmap(log(counts + 1), show_rownames=TRUE, show_colnames=FALSE,
+           cluster_rows=F, annotation_row=anno_row)
+}
+marker_heatmap(counts, anno_row)
+```
+
+# Summary
+We'll stop for now, but it does look like there could be different populations
+of cells in this dataset, despite the quality issues.
